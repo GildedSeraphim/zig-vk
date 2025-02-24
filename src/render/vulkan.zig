@@ -10,6 +10,10 @@ const validation_layers: []const [*c]const u8 = if (!debug) &[0][*c]const u8{} e
     "VK_LAYER_KHRONOS_validation",
 };
 
+const device_extensions: []const [*c]const u8 = &[_][*c]const u8{
+    c.VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+};
+
 pub const Error = error{
     out_of_host_memory,
     out_of_device_memory,
@@ -52,8 +56,8 @@ pub const Instance = struct {
         .pApplicationInfo = &app_info,
         .enabledLayerCount = @intCast(validation_layers.len),
         .ppEnabledLayerNames = validation_layers.ptr,
-        .enabledExtensionCount = 0,
-        .ppEnabledExtensionNames = null,
+        .enabledExtensionCount = @intCast(device_extensions.len),
+        .ppEnabledExtensionNames = device_extensions.ptr,
     };
 
     var instance: c.VkInstance = undefined;
