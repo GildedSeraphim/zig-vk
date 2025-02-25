@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("../clibs.zig");
+const expect = std.testing.expect;
 
 const Allocator = std.mem.Allocator;
 
@@ -20,6 +21,9 @@ pub const Error = error{
     initialization_failed,
     layer_not_present,
     extension_not_present,
+    feature_not_present,
+    too_many_objects,
+    device_lost,
     incompatible_driver,
     unknown_error,
 };
@@ -32,6 +36,9 @@ pub fn mapError(result: c_int) !void {
         c.VK_ERROR_INITIALIZATION_FAILED => Error.initialization_failed,
         c.VK_ERROR_LAYER_NOT_PRESENT => Error.layer_not_present,
         c.VK_ERROR_EXTENSION_NOT_PRESENT => Error.extension_not_present,
+        c.VK_ERROR_FEATURE_NOT_PRESENT => Error.feature_not_present,
+        c.VK_ERROR_TOO_MANY_OBJECTS => Error.too_many_objects,
+        c.VK_ERROR_DEVICE_LOST => Error.device_lost,
         c.VK_ERROR_INCOMPATIBLE_DRIVER => Error.incompatible_driver,
         else => Error.unknown_error,
     };
@@ -52,7 +59,6 @@ pub const Instance = struct {
 
     const create_info: c.VkInstanceCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-        .pNext = null,
         .pApplicationInfo = &app_info,
         .enabledLayerCount = @intCast(validation_layers.len),
         .ppEnabledLayerNames = validation_layers.ptr,
@@ -76,53 +82,56 @@ pub const Instance = struct {
 
 pub const PhysicalDevice = struct {
     handle: c.VkPhysicalDevice,
-    features: c.VkPhysicalDeviceFeatures,
+    // We do not create physical devices, we enumerate them
+    // This gives us a list of devices and we can then filter them
+    // for various properties. For now we will just pick the first
+    // device
+    pub fn pickPhysDevices(allocator: Allocator, instance: Instance) !PhysicalDevice {
+        var count: u32 = undefined;
+        mapError(try c.vkEnumeratePhysicalDevices(instance.handle, &count, null));
 
-    pub fn pickPhysicalDevice(a: Allocator, i: Instance) !PhysicalDevice {
-        var device_count: u32 = 0;
-        mapError(try c.vkEnumeratePhysicalDevices(i.handle, &device_count, null));
-        const devices_list = try a.alloc(c.VkPhysicalDevice, device_count);
-        defer a.free(devices_list);
-        mapError(try c.vkEnumeratePhysicalDevices(i.handle, &device_count, @ptrCast(devices_list)));
+        const physical_devices = try allocator.alloc(c.VkPhysicalDevice, count);
+        defer allocator.free(physical_devices);
 
-        return PhysicalDevice{ .handle = devices_list[0] };
-    }
+        mapError(try c.vkEnumeratePhysicalDevices(instance.handle, &count, physical_devices));
+        const physical_device = physical_devices[0];
 
-    pub fn getDeviceFeatures(physical_device: PhysicalDevice) !PhysicalDevice {
-        const physical_device_features: c.VkPhysicalDeviceFeatures2 = .{
-            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        };
-        mapError(try c.vkGetPhysicalDeviceFeatures(physical_device.handle, &physical_device_features));
+        // In the future we may want to use parameters to
+        // select the physical device. This can be done by
+        // vkEnumerateDeviceExtensionProperties and with
+        // vkGetPhysicalDeviceProperties.
 
         return PhysicalDevice{
-            .features = physical_device_features,
+            .handle = physical_device,
         };
     }
-
-    pub fn createDevice(physical_device: PhysicalDevice) !c.VkDevice {
-        const device_info: c.VkDeviceCreateInfo = .{
-            .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-            .pNext = &physical_device.features,
-            .queueCreateInfoCount = 0,
-            .pQueueCreateInfos = null, //Setup queues
-            .enabledExtensionCount = @intCast(device_extensions.len),
-            .ppEnabledExtensionNames = device_extensions.ptr, //Add extensions
-            .pEnabledFeatures = null, //get physical device features
-        };
-
-        var device: c.VkDevice = undefined;
-
-        mapError(try c.vkCreateDevice(
-            physical_device.handle,
-            &device_info,
-            null,
-            &device,
-        ));
-    }
-
-    pub fn destroy(self: PhysicalDevice) !void {}
 };
 
 pub const Device = struct {
     handle: c.VkDevice,
+
+    pub fn createDevice(physical_device: PhysicalDevice) !Device {
+        const priority: f32 = 1.0;
+        const queue_create_info: c.VkDeviceQueueCreateInfo = .{
+            .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = 0,
+            .queueCount = 1,
+            .pQueuePriorities = &priority,
+        };
+
+        const create_info: c.VkDeviceCreateInfo = .{
+            .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1,
+            .pQueueCreateInfos = &queue_create_info,
+            .enabledExtensionCount = @intCast(device_extensions.len),
+            .ppEnabledExtensionNames = device_extensions.ptr,
+        };
+
+        var device: c.VkDevice = undefined;
+        mapError(try c.vkCreateDevice(physical_device.handle, &create_info, null, &device));
+
+        return Device{
+            .handle = device,
+        };
+    }
 };
