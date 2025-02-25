@@ -89,7 +89,9 @@ pub const PhysicalDevice = struct {
     }
 
     pub fn getDeviceFeatures(physical_device: PhysicalDevice) !PhysicalDevice {
-        const physical_device_features: c.VkPhysicalDeviceFeatures = .{};
+        const physical_device_features: c.VkPhysicalDeviceFeatures2 = .{
+            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        };
         mapError(try c.vkGetPhysicalDeviceFeatures(physical_device.handle, &physical_device_features));
 
         return PhysicalDevice{
@@ -97,15 +99,30 @@ pub const PhysicalDevice = struct {
         };
     }
 
-    pub fn createDevice(a: Allocator, physical_device: PhysicalDevice) !c.VkDevice {
-        const create_info: c.VkDeviceCreateInfo = .{
+    pub fn createDevice(physical_device: PhysicalDevice) !c.VkDevice {
+        const device_info: c.VkDeviceCreateInfo = .{
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-            .pNext = null, // Keep null
+            .pNext = &physical_device.features,
             .queueCreateInfoCount = 0,
             .pQueueCreateInfos = null, //Setup queues
-            .enabledExtensionCount = 0,
-            .ppEnabledExtensionNames = null, //Add extensions
+            .enabledExtensionCount = @intCast(device_extensions.len),
+            .ppEnabledExtensionNames = device_extensions.ptr, //Add extensions
             .pEnabledFeatures = null, //get physical device features
         };
+
+        var device: c.VkDevice = undefined;
+
+        mapError(try c.vkCreateDevice(
+            physical_device.handle,
+            &device_info,
+            null,
+            &device,
+        ));
     }
+
+    pub fn destroy(self: PhysicalDevice) !void {}
+};
+
+pub const Device = struct {
+    handle: c.VkDevice,
 };
