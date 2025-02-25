@@ -73,3 +73,39 @@ pub const Instance = struct {
         mapError(try c.vkDestroyInstance(i.handle, null));
     }
 };
+
+pub const PhysicalDevice = struct {
+    handle: c.VkPhysicalDevice,
+    features: c.VkPhysicalDeviceFeatures,
+
+    pub fn pickPhysicalDevice(a: Allocator, i: Instance) !PhysicalDevice {
+        var device_count: u32 = 0;
+        mapError(try c.vkEnumeratePhysicalDevices(i.handle, &device_count, null));
+        const devices_list = try a.alloc(c.VkPhysicalDevice, device_count);
+        defer a.free(devices_list);
+        mapError(try c.vkEnumeratePhysicalDevices(i.handle, &device_count, @ptrCast(devices_list)));
+
+        return PhysicalDevice{ .handle = devices_list[0] };
+    }
+
+    pub fn getDeviceFeatures(physical_device: PhysicalDevice) !PhysicalDevice {
+        const physical_device_features: c.VkPhysicalDeviceFeatures = .{};
+        mapError(try c.vkGetPhysicalDeviceFeatures(physical_device.handle, &physical_device_features));
+
+        return PhysicalDevice{
+            .features = physical_device_features,
+        };
+    }
+
+    pub fn createDevice(a: Allocator, physical_device: PhysicalDevice) !c.VkDevice {
+        const create_info: c.VkDeviceCreateInfo = .{
+            .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .pNext = null, // Keep null
+            .queueCreateInfoCount = 0,
+            .pQueueCreateInfos = null, //Setup queues
+            .enabledExtensionCount = 0,
+            .ppEnabledExtensionNames = null, //Add extensions
+            .pEnabledFeatures = null, //get physical device features
+        };
+    }
+};
