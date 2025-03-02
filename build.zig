@@ -15,7 +15,6 @@ pub fn build(b: *std.Build) void {
 
     exe.linkSystemLibrary("vulkan");
     exe.linkSystemLibrary("glfw");
-    exe.linkSystemLibrary("glm");
     exe.linkLibC();
 
     const run_cmd = b.addRunArtifact(exe);
