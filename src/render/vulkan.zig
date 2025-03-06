@@ -2,6 +2,8 @@ const std = @import("std");
 const c = @import("../c.zig");
 const window = @import("./window.zig");
 
+const expect = std.testing.expect;
+
 const Allocator = std.mem.Allocator;
 
 const builtin = @import("builtin");
@@ -51,7 +53,7 @@ pub const Instance = struct {
             .applicationVersion = c.VK_MAKE_VERSION(1, 0, 0),
             .pEngineName = "vk",
             .engineVersion = c.VK_MAKE_VERSION(1, 0, 0),
-            .apiVersion = c.VK_MAKE_VERSION(1, 3, 0),
+            .apiVersion = c.VK_API_VERSION_1_3,
         };
 
         const create_info: c.VkInstanceCreateInfo = .{
@@ -74,6 +76,46 @@ pub const Instance = struct {
 
     pub fn destroy(self: Instance) !void {
         mapError(try c.vkDestroyInstance(self.handle, null));
+    }
+};
+
+pub const Surface = struct {
+    handle: c.VkSurfaceKHR,
+
+    pub fn create(instance: Instance, w: window.Window) !Surface {
+        var handle: c.VkSurfaceKHR = undefined;
+        try mapError(c.glfwCreateWindowSurface(instance.handle, w.raw, null, &handle));
+        return Surface{
+            .handle = handle,
+        };
+    }
+
+    pub fn presentModes(self: Surface, allocator: Allocator, device: PhysicalDevice) ![]c.VkPresentModeKHR {
+        var mode_count: u32 = 0;
+        try mapError(c.vkGetPhysicalDeviceSurfacePresentModesKHR(device.handle, self.handle, &mode_count, null));
+        const modes = try allocator.alloc(c.VkPresentModeKHR, mode_count);
+        try mapError(c.vkGetPhysicalDeviceSurfacePresentModesKHR(device.handle, self.handle, &mode_count, @ptrCast(modes)));
+
+        return modes[0..mode_count];
+    }
+
+    pub fn formats(self: Surface, allocator: Allocator, device: PhysicalDevice) ![]c.VkSurfaceFormatKHR {
+        var format_count: u32 = 0;
+        try mapError(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device.handle, self.handle, &format_count, null));
+        const fmts = try allocator.alloc(c.VkSurfaceFormatKHR, format_count);
+        try mapError(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device.handle, self.handle, &format_count, @ptrCast(fmts)));
+
+        return fmts[0..format_count];
+    }
+
+    pub fn capabilities(self: Surface, device: PhysicalDevice) !c.VkSurfaceCapabilitiesKHR {
+        var caps: c.VkSurfaceCapabilitiesKHR = undefined;
+        try mapError(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.handle, self.handle, &caps));
+        return caps;
+    }
+
+    pub fn destroy(self: Surface, instance: Instance) void {
+        c.vkDestroySurfaceKHR(instance.handle, self.handle, null);
     }
 };
 
@@ -106,52 +148,32 @@ pub const PhysicalDevice = struct {
         };
     }
 
-    pub fn queueFamilyProperties(self: PhysicalDevice, allocator: Allocator) ![]const c.VkQueueFamilyProperties {
-        var q_fam_count: u32 = undefined;
-        mapError(try c.vkGetPhysicalDeviceQueueFamilyProperties(self.handle, &q_fam_count, null));
-
-        const q_properties = allocator.alloc(c.VkQueueFamilyProperties, q_fam_count);
-        mapError(try c.vkGetPhysicalDeviceQueueFamilyProperties(self.handle, &q_fam_count, &q_properties));
-
-        return q_properties;
-    }
-
-    pub fn createDevice(self: PhysicalDevice) !Device {
-        const device_queue_create_info: c.VkDeviceQueueCreateInfo = .{
+    pub fn createDevice(pd: PhysicalDevice) !Device {
+        const priority: f32 = 1.0;
+        const queue_create_info: c.VkDeviceQueueCreateInfo = .{
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .pNext = null,
             .queueFamilyIndex = 0,
             .queueCount = 1,
-            .pQueuePriorities = 1.0,
+            .pQueuePriorities = &priority,
         };
+
+        const enabled_extensions: []const [*c]const u8 = &[_][*c]const u8{"VK_KHR_swapchain"};
 
         const create_info: c.VkDeviceCreateInfo = .{
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-            .pNext = null,
-            .queueCreateInfoCount = 0,
-            .pQueueCreateInfos = &device_queue_create_info,
-            .enabledExtensionCount = @intCast(device_extensions.len),
-            .ppEnabledExtensionNames = device_extensions.ptr,
-            .pEnabledFeatures = null,
+            .queueCreateInfoCount = 1,
+            .pQueueCreateInfos = &queue_create_info,
+            .enabledExtensionCount = 1,
+            .ppEnabledExtensionNames = enabled_extensions,
         };
 
-        const device: c.VkDevice = undefined;
-        mapError(try c.vkCreateDevice(self.handle, &create_info, null, &device));
+        var device: c.VkDevice = undefined;
+        mapError(try c.vkCreateDevice(pd.handle, &create_info, null, &device));
 
-        // We have now created our device
-        // It can be used in the following ways ::
-        // - The creation of queues (which we will be doing here)
-        // - Creation and tracking of synchronization constructs
-        // - Allocating, freeing, and managing memory
-        // - Creation and destruction of command buffers / buffer pools
-        // - Creation, destruction, and management of the graphics state (Pipelines, resource descriptors)
-
-        return Device{
-            .handle = device,
-        };
+        return Device{ .handle = device };
     }
 };
 
-pub const Buffer = struct {
-    handle: c.VkCommandBuffer,
+pub const SwapChain = struct {
+    handle: c.VkSwapchainKHR,
 };
