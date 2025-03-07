@@ -1,6 +1,4 @@
 const std = @import("std");
-const c = @import("c.zig");
-const window = @import("render/window.zig");
-const vk = @import("render/vulkan.zig");
+const c = @import("clibs.zig");
 
 pub fn main() !void {}
