@@ -1,14 +1,15 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    //   const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const target = b.standardTargetOptions(.{});
 
-    const glad_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
-    glad_module.addIncludePath(b.path("ext/glad/"));
-    const glad = b.addLibrary(.{ .name = "glad", .root_module = glad_module });
-
-    glad_module.addCSourceFiles(.{ .files = &[_][]const u8{"ext/glad/glad.c"} });
+    //const translate_c = b.addTranslateC(.{
+    //    .root_source_file = b.path("src/c.h"),
+    //    .target = target,
+    //    .optimize = optimize,
+    //    .link_libc = true,
+    //});
 
     const exe = b.addExecutable(.{
         .name = "hello",
@@ -31,12 +32,10 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("glfw");
     exe.linkSystemLibrary("imgui");
     exe.linkSystemLibrary("cglm");
-    exe.addIncludePath(b.path("ext/glad/"));
-    exe.addIncludePath(b.path("ext/glad/glad/"));
-    exe.linkLibrary(glad);
     // #################
 
     exe.linkLibCpp();
+    //exe.root_module.addImport("c", translate_c.createModule());
     b.installArtifact(exe);
 
     const run_exe = b.addRunArtifact(exe);

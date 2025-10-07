@@ -18,8 +18,8 @@
       system:
       let
         lib = nixpkgs.lib;
-        zig = inputs.zig.packages.x86_64-linux.master;
-        zls = inputs.zls.packages.x86_64-linux.default;
+        #zig = inputs.zig.packages.x86_64-linux.master;
+        #zls = inputs.zls.packages.x86_64-linux.default;
         pkgs = import nixpkgs {
           system = "${system}";
           config = {
@@ -102,14 +102,18 @@
               ### Tools ###
               glfw
               glfw3
-              renderdoc
+              pkg-config
               #############
             ];
 
-            # LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";
+            LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";
             #XDG_DATA_DIRS = builtins.getEnv "XDG_DATA_DIRS";
             #XDG_RUNTIME_DIR = "/run/user/1000";
             #STB_INCLUDE_PATH = "./headers/stb";
+            PKG_CONFIG_PATH = pkgs.lib.makeSearchPath "lib/pkgconfig" [
+              pkgs.vulkan-loader
+              pkgs.glfw
+            ];
           };
         };
       }
