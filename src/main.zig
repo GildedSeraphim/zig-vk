@@ -2,6 +2,8 @@ const std = @import("std");
 const vk = @import("render/vulkan.zig");
 
 pub fn main() !void {
-    std.debug.print("Hello World!", .{});
-    _ = try vk.init();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    _ = try vk.init(allocator);
 }
