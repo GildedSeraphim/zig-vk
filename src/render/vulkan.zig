@@ -123,31 +123,69 @@ pub fn init(alloc: Allocator) !void {
     defer c.vkDestroyDevice(device, null);
 
     // Swapchain ------------------------------------------------------------------
-    const extent = c.VkExtent2D{ .width = 800, .height = 600 };
+    var surface_properties: c.VkSurfaceCapabilitiesKHR = undefined;
+    _ = c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surface_properties);
+
+    var swapchain_size = c.VkExtent2D{};
+    if (surface_properties.currentExtent.width == 0xFFFFFFFF) {
+        swapchain_size.width = 800;
+        swapchain_size.height = 600;
+    } else {
+        swapchain_size = surface_properties.currentExtent;
+    }
+
+    const swapchain_present_mode: c.VkPresentModeKHR = c.VK_PRESENT_MODE_FIFO_KHR;
+
+    var desired_swapchain_images = surface_properties.minImageCount + 1;
+    if ((surface_properties.maxImageCount > 0) and (desired_swapchain_images > surface_properties.maxImageCount)) {
+        desired_swapchain_images = surface_properties.maxImageCount;
+    }
+
+    var pre_transform: c.VkSurfaceTransformFlagBitsKHR = undefined;
+    if ((surface_properties.supportedTransforms & c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) != 0) {
+        pre_transform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    } else {
+        pre_transform = surface_properties.currentTransform;
+    }
+
+    var composite: c.VkCompositeAlphaFlagBitsKHR = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if ((surface_properties.supportedCompositeAlpha & c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) != 0) {
+        composite = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    } else if ((surface_properties.supportedCompositeAlpha & c.VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR) != 0) {
+        composite = c.VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    } else if ((surface_properties.supportedCompositeAlpha & c.VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) != 0) {
+        composite = c.VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+    } else if ((surface_properties.supportedCompositeAlpha & c.VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR) != 0) {
+        composite = c.VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR;
+    }
+
     const swapchain_create_info = c.VkSwapchainCreateInfoKHR{
         .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = surface,
-        .minImageCount = 4,
+        .minImageCount = desired_swapchain_images,
         .imageFormat = c.VK_FORMAT_R8G8B8A8_SRGB,
         .imageColorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-        .imageExtent = extent,
+        .imageExtent = swapchain_size,
         .imageArrayLayers = 1,
         .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .presentMode = c.VK_PRESENT_MODE_IMMEDIATE_KHR,
-        .imageSharingMode = c.VK_SHARING_MODE_CONCURRENT,
-        .queueFamilyIndexCount = 1,
+        .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+        .preTransform = pre_transform,
+        .compositeAlpha = composite,
+        .presentMode = swapchain_present_mode,
+        .clipped = c.VK_TRUE,
     };
 
     var swapchain: c.VkSwapchainKHR = undefined;
     _ = c.vkCreateSwapchainKHR(device, &swapchain_create_info, null, &swapchain);
     defer c.vkDestroySwapchainKHR(device, swapchain, null);
 
-    const images = try alloc.alloc(c.VkImage, 4);
+    // Images
     var swap_count: u32 = undefined;
+    _ = c.vkGetSwapchainImagesKHR(device, swapchain, &swap_count, null);
+
+    const images = try alloc.alloc(c.VkImage, swap_count);
     defer alloc.free(images);
     _ = c.vkGetSwapchainImagesKHR(device, swapchain, &swap_count, @ptrCast(images));
-
-    std.debug.print("Swap Count :: {d}\n", .{swap_count});
 }
 
 // Helper Functions ---------------------------------------------------------------
@@ -166,61 +204,4 @@ fn isSuitable(device: c.VkPhysicalDevice) bool {
     }
 
     return is_suitable;
-}
-
-fn getQueueFamilyProperties(phys_dev: c.VkPhysicalDevice, alloc: Allocator) ![]const c.VkQueueFamilyProperties {
-    var count: u32 = undefined;
-    _ = c.vkGetPhysicalDeviceQueueFamilyProperties(phys_dev, &count, null);
-
-    const queue_list = try alloc.alloc(c.VkQueueFamilyProperties, count);
-
-    _ = c.vkGetPhysicalDeviceQueueFamilyProperties(phys_dev, &count, @ptrCast(queue_list));
-
-    std.debug.print("Queue count:: {d}\n", .{count});
-    return queue_list;
-}
-
-fn graphicsQueue(phys_dev: c.VkPhysicalDevice, alloc: Allocator) !u32 {
-    const queue_families = try getQueueFamilyProperties(phys_dev, alloc);
-    defer alloc.free(queue_families);
-
-    var graphics_queue: ?u32 = null;
-
-    for (queue_families, 1..) |family, index| {
-        if (graphics_queue) |_| {
-            break;
-        }
-
-        if ((family.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0x0) {
-            graphics_queue = @intCast(index);
-        }
-    }
-
-    std.debug.print("Graphics Queue Index:: {d}\n", .{graphics_queue.?});
-
-    return graphics_queue.?;
-}
-
-fn presentQueue(phys_dev: c.VkPhysicalDevice, alloc: Allocator, surface: c.VkSurfaceKHR) !u32 {
-    const queue_families = try getQueueFamilyProperties(phys_dev, alloc);
-    defer alloc.free(queue_families);
-
-    var present_queue: ?u32 = null;
-
-    for (queue_families, 0..) |_, index| {
-        if (present_queue) |_| {
-            break;
-        }
-
-        var support: u32 = undefined;
-        _ = c.vkGetPhysicalDeviceSurfaceSupportKHR(phys_dev, @intCast(index), surface, &support);
-
-        if (support == c.VK_TRUE) {
-            present_queue = @intCast(index);
-        }
-    }
-
-    std.debug.print("Present Queue Index:: {d}\n", .{present_queue.?});
-
-    return present_queue.?;
 }
