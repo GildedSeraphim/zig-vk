@@ -19,9 +19,8 @@ pub fn init(alloc: Allocator) !void {
         "VK_LAYER_KHRONOS_validation",
     };
 
-    const device_extensions: []const [*c]const u8 = &[_][*c]const u8{
-        c.VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        c.VK_KHR_swapchain,
+    const device_extensions: []const [*c]const u8 = &.{
+        "VK_KHR_swapchain",
     };
 
     // Instance --------------------------------------------------------------------
@@ -80,45 +79,47 @@ pub fn init(alloc: Allocator) !void {
     defer c.vkDestroySurfaceKHR(instance, surface, null);
 
     // Device ----------------------------------------------------------------------
-    const present_queue_index = try presentQueue(physical_device, alloc, surface);
-    const graphics_queue_index = try graphicsQueue(physical_device, alloc);
+    const priorities = [_]f32{1.0};
 
-    const priorities: f32 = 1.0;
-
-    const graphics_queue_create_info: c.VkDeviceQueueCreateInfo = .{
+    const queue_create_info = c.VkDeviceQueueCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .queueFamilyIndex = 0,
         .queueCount = 1,
-        .pQueuePriorities = &priorities,
-        .queueFamilyIndex = present_queue_index,
-    };
-    const present_queue_create_info = c.VkDeviceQueueCreateInfo{
-        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueCount = 1,
-        .pQueuePriorities = &priorities,
-        .queueFamilyIndex = graphics_queue_index,
+        .pQueuePriorities = &priorities[0],
     };
 
-    const queues: []const c.VkDeviceQueueCreateInfo = &.{ graphics_queue_create_info, present_queue_create_info };
+    const physical_device_features = c.VkPhysicalDeviceFeatures{
+        .geometryShader = c.VK_TRUE,
+        .tessellationShader = c.VK_TRUE,
+    };
 
-    var device_features: c.VkPhysicalDeviceFeatures = .{};
-
-    _ = c.vkGetPhysicalDeviceFeatures(physical_device, &device_features);
-
-    const features = try alloc.alloc(c.VkPhysicalDeviceFeatures, 1);
-    defer alloc.free(features);
+    const dynamic_rendering_features = c.VkPhysicalDeviceDynamicRenderingFeatures{
+        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+        .pNext = null,
+        .dynamicRendering = c.VK_TRUE,
+    };
 
     const device_create_info = c.VkDeviceCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = null,
-        .queueCreateInfoCount = @intCast(queues.len),
-        .pQueueCreateInfos = @ptrCast(queues.ptr),
-        .enabledExtensionCount = @intCast(device_extensions.len),
-        .ppEnabledExtensionNames = @ptrCast(device_extensions.ptr),
-        .pEnabledFeatures = @ptrCast(features),
+        .pNext = &dynamic_rendering_features,
+        .flags = 0,
+        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = &queue_create_info,
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = null,
+        .enabledExtensionCount = @as(u32, @intCast(device_extensions.len)),
+        .ppEnabledExtensionNames = device_extensions.ptr,
+        .pEnabledFeatures = &physical_device_features,
     };
 
     var device: c.VkDevice = undefined;
-    _ = c.vkCreateDevice(physical_device, &device_create_info, null, &device);
+    const result = c.vkCreateDevice(physical_device, &device_create_info, null, &device);
+    if (result != c.VK_SUCCESS) {
+        std.debug.print("vkCreateDevice failed: {d}\n", .{result});
+        return error.DeviceCreationFailed;
+    }
     defer c.vkDestroyDevice(device, null);
 
     // Swapchain ------------------------------------------------------------------
@@ -134,7 +135,7 @@ pub fn init(alloc: Allocator) !void {
         .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .presentMode = c.VK_PRESENT_MODE_IMMEDIATE_KHR,
         .imageSharingMode = c.VK_SHARING_MODE_CONCURRENT,
-        .queueFamilyIndexCount = @intCast(queues.len),
+        .queueFamilyIndexCount = 1,
     };
 
     var swapchain: c.VkSwapchainKHR = undefined;
