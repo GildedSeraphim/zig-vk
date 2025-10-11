@@ -15,6 +15,8 @@ pub fn init(alloc: Allocator) !void {
     defer window.destroy();
     const extensions = w.getExtensions();
 
+    const vk_alloc_cb: ?*c.VkAllocationCallbacks = null;
+
     const validation_layers: []const [*c]const u8 = &[_][*c]const u8{
         "VK_LAYER_KHRONOS_validation",
     };
@@ -186,6 +188,152 @@ pub fn init(alloc: Allocator) !void {
     const images = try alloc.alloc(c.VkImage, swap_count);
     defer alloc.free(images);
     _ = c.vkGetSwapchainImagesKHR(device, swapchain, &swap_count, @ptrCast(images));
+
+    const semaphore_create_info = c.VkSemaphoreCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    };
+    var semaphore: c.VkSemaphore = undefined;
+    _ = c.vkCreateSemaphore(device, &semaphore_create_info, vk_alloc_cb, &semaphore);
+    defer c.vkDestroySemaphore(device, semaphore, vk_alloc_cb);
+
+    const fence_create_info = c.VkFenceCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+    var fence: c.VkFence = undefined;
+    _ = c.vkCreateFence(device, &fence_create_info, vk_alloc_cb, &fence);
+    defer c.vkDestroyFence(device, fence, vk_alloc_cb);
+
+    var current_swap_image: u32 = undefined;
+    _ = c.vkAcquireNextImageKHR(device, swapchain, 0xFFFFFFFF, semaphore, null, &current_swap_image); // need synchronization
+
+    // Backbuffer -----------------------------------------------------------------
+    const backbuffer_view_create_info = c.VkImageViewCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = images[0],
+        .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+        .format = c.VK_FORMAT_R8G8B8A8_SRGB,
+        .subresourceRange = .{
+            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    };
+    var backbuffer_view: c.VkImageView = undefined;
+    _ = c.vkCreateImageView(device, &backbuffer_view_create_info, vk_alloc_cb, &backbuffer_view);
+    defer c.vkDestroyImageView(device, backbuffer_view, vk_alloc_cb);
+
+    // Queue ----------------------------------------------------------------------
+    var queue: c.VkQueue = undefined;
+    _ = c.vkGetDeviceQueue(device, 0, 0, &queue);
+    // queues are destoyed with devices
+
+    // Renderpass -----------------------------------------------------------------
+    const attachment = c.VkAttachmentDescription{
+        .format = c.VK_FORMAT_R8G8B8A8_SRGB,
+        .samples = c.VK_SAMPLE_COUNT_1_BIT, // Not multisampled.
+        .loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR, // When starting the frame, we want tiles to be cleared.
+        .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE, // When ending the frame, we want tiles to be written out.
+        .stencilLoadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE, // Don't care about stencil since we're not using it.
+        .stencilStoreOp = c.VK_ATTACHMENT_STORE_OP_DONT_CARE, // Don't care about stencil since we're not using it.
+        .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED, // The image layout will be undefined when the render pass begins.
+        .finalLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, // After the render pass is complete, we will transition to PRESENT_SRC_KHR layout.
+    };
+
+    const color_ref = c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+
+    const subpass = c.VkSubpassDescription{
+        .pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS, // describes purpose of renderpass
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &color_ref,
+    };
+
+    const dependency = c.VkSubpassDependency{
+        .srcSubpass = c.VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    };
+
+    const renderpass_create_info = c.VkRenderPassCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &attachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 1,
+        .pDependencies = &dependency,
+    };
+
+    var renderpass: c.VkRenderPass = undefined;
+    _ = c.vkCreateRenderPass(device, &renderpass_create_info, vk_alloc_cb, &renderpass);
+    defer c.vkDestroyRenderPass(device, renderpass, vk_alloc_cb);
+
+    // Framebuffer ----------------------------------------------------------------
+    const framebuffer_create_info = c.VkFramebufferCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = renderpass,
+        .attachmentCount = 1,
+        .pAttachments = &backbuffer_view,
+        .width = swapchain_size.width,
+        .height = swapchain_size.height,
+        .layers = 1,
+    };
+    var framebuffer: c.VkFramebuffer = undefined;
+    _ = c.vkCreateFramebuffer(device, &framebuffer_create_info, vk_alloc_cb, &framebuffer);
+    defer c.vkDestroyFramebuffer(device, framebuffer, vk_alloc_cb);
+
+    // Descriptor Sets ------------------------------------------------------------
+    const UBO_binding = c.VkDescriptorSetLayoutBinding{
+        .binding = 0,
+        .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = c.VK_SHADER_STAGE_ALL_GRAPHICS,
+        .pImmutableSamplers = null,
+    };
+    const sampler_binding = c.VkDescriptorSetLayoutBinding{
+        .binding = 1,
+        .descriptorType = c.VK_DESCRIPTOR_TYPE_SAMPLER,
+        .descriptorCount = 1,
+        .stageFlags = c.VK_SHADER_STAGE_ALL_GRAPHICS,
+        .pImmutableSamplers = null,
+    };
+    const image_binding = c.VkDescriptorSetLayoutBinding{
+        .binding = 5,
+        .descriptorType = c.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .descriptorCount = 1,
+        .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT,
+        .pImmutableSamplers = null,
+    };
+
+    const bindings = [_]c.VkDescriptorSetLayoutBinding{
+        UBO_binding,
+        sampler_binding,
+        image_binding,
+    };
+
+    const descriptor_set_layout_create_info = c.VkDescriptorSetLayoutCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = @intCast(bindings.len),
+        .pBindings = bindings[0..].ptr,
+    };
+    var descriptor_set_layout: c.VkDescriptorSetLayout = undefined;
+    _ = c.vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create_info, vk_alloc_cb, &descriptor_set_layout);
+    defer c.vkDestroyDescriptorSetLayout(device, descriptor_set_layout, vk_alloc_cb);
+
+    // Pipeline Layout ------------------------------------------------------------
+    const pipeline_layout_create_info = c.VkPipelineLayoutCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptor_set_layout,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = null,
+    };
+    var pipeline_layout: c.VkPipelineLayout = undefined;
+    _ = c.vkCreatePipelineLayout(device, &pipeline_layout_create_info, vk_alloc_cb, &pipeline_layout);
+    defer c.vkDestroyPipelineLayout(device, pipeline_layout, vk_alloc_cb);
 }
 
 // Helper Functions ---------------------------------------------------------------
