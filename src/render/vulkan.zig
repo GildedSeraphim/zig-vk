@@ -334,6 +334,83 @@ pub fn init(alloc: Allocator) !void {
     var pipeline_layout: c.VkPipelineLayout = undefined;
     _ = c.vkCreatePipelineLayout(device, &pipeline_layout_create_info, vk_alloc_cb, &pipeline_layout);
     defer c.vkDestroyPipelineLayout(device, pipeline_layout, vk_alloc_cb);
+
+    //Shaders ---------------------------------------------------------------------
+    var frag_shader_module: c.VkShaderModule = undefined;
+    var vert_shader_module: c.VkShaderModule = undefined;
+
+    const vertex_shader_source =
+        \\#version 330 core
+        \\out vec3 FC;
+        \\
+        \\uniform vec2 r; // resolution
+        \\
+        \\void main() {
+        \\    vec2 uv = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+        \\    FC = vec3(uv, 0.0); // add .z for use in FC.rgb
+        \\    gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+        \\}
+    ;
+    const fragment_shader_source =
+        \\#version 300 es
+        \\precision highp float;
+        \\
+        \\uniform vec2 r;     
+        \\uniform float t;    
+        \\
+        \\out vec4 o;        
+        \\
+        \\void main() {
+        \\    vec3 FC = vec3(gl_FragCoord.xy, 0.5); 
+        \\    vec3 rayDir = normalize(FC * 2.0 - r.xyy); 
+        \\
+        \\    vec4 colorAccum = vec4(0.0);
+        \\    float z = 0.0;
+        \\    float d = 0.0;
+        \\
+        \\    for (float i = 0.0; i < 80.0; i++) {
+        \\        vec3 p = z * rayDir;
+        \\        p.z += 6.0; // move camera back
+        \\
+        \\        vec3 a = normalize(cos(vec3(1.0, 2.0, 0.0) + t - d * 5.0));//decides turbulence
+        \\
+        \\        a = a * dot(a, p) - cross(a, p);
+        \\
+        \\        for (d = 1.0; d <= 2.0; d++) {
+        \\            a += sin(a * d + t).yzx / d;
+        \\        }
+        \\
+        \\        d = 0.05 * abs(length(p) - 3.0) + 0.04 * abs(a.y);
+        \\        d = max(d, 1e-4); // safety against divide-by-zero
+        \\        z += d;
+        \\
+        \\        vec4 col = (cos(d / 0.1 + vec4(1.0, z, z, 0.0)) + 1.0); //decides color
+        \\        colorAccum += col / d * z;
+        \\    }
+        \\
+        \\    o = vec4(tanh(colorAccum.rgb / 3e4), 1.0);
+        \\}
+    ;
+
+    const frag_shader_module_create_info = c.VkShaderModuleCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = fragment_shader_source.len,
+        .pCode = @ptrCast(@alignCast(fragment_shader_source)),
+    };
+
+    const vert_shader_module_create_info = c.VkShaderModuleCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = vertex_shader_source.len,
+        .pCode = @ptrCast(@alignCast(vertex_shader_source)),
+    };
+
+    _ = c.vkCreateShaderModule(device, &frag_shader_module_create_info, vk_alloc_cb, &frag_shader_module);
+    defer c.vkDestroyShaderModule(device, frag_shader_module, vk_alloc_cb);
+    _ = c.vkCreateShaderModule(device, &vert_shader_module_create_info, vk_alloc_cb, &vert_shader_module);
+    defer c.vkDestroyShaderModule(device, vert_shader_module, vk_alloc_cb);
+
+    // Graphics Pipeline ----------------------------------------------------------
+
 }
 
 // Helper Functions ---------------------------------------------------------------
