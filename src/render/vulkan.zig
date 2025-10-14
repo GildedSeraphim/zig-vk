@@ -426,9 +426,9 @@ pub fn init(alloc: Allocator) !void {
         .pCode = @ptrCast(@alignCast(vertex_shader_source)),
     };
 
-    _ = c.vkCreateShaderModule(device, &frag_shader_module_create_info, vk_alloc_cb, &frag_shader_module);
+    _ = c.vkCreateShaderModule(device, &frag_shader_module_create_info, vk_alloc_cb, @ptrCast(&frag_shader_module));
     defer c.vkDestroyShaderModule(device, frag_shader_module, vk_alloc_cb);
-    _ = c.vkCreateShaderModule(device, &vert_shader_module_create_info, vk_alloc_cb, &vert_shader_module);
+    _ = c.vkCreateShaderModule(device, &vert_shader_module_create_info, vk_alloc_cb, @ptrCast(&vert_shader_module));
     defer c.vkDestroyShaderModule(device, vert_shader_module, vk_alloc_cb);
 
     // Graphics Pipeline ----------------------------------------------------------
