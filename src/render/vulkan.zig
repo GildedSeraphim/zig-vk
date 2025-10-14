@@ -538,6 +538,37 @@ pub fn init(alloc: Allocator) !void {
     defer c.vkDestroyPipeline(device, pipeline, vk_alloc_cb);
 
     //Descriptor Pool -------------------------------------------------------------
+    const descriptor_pool_size = c.VkDescriptorPoolSize{
+        .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+    };
+
+    const descriptor_pool_create_info = c.VkDescriptorPoolCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = 1,
+        .poolSizeCount = 1,
+        .pPoolSizes = &descriptor_pool_size,
+    };
+
+    var descriptor_pool: c.VkDescriptorPool = undefined;
+    _ = c.vkCreateDescriptorPool(device, &descriptor_pool_create_info, vk_alloc_cb, &descriptor_pool);
+    defer c.vkDestroyDescriptorPool(device, descriptor_pool, vk_alloc_cb);
+
+    // Descriptor Set -------------------------------------------------------------
+    const descriptor_set_alloc_info = c.VkDescriptorSetAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorSetCount = 1,
+        .descriptorPool = descriptor_pool,
+        .pSetLayouts = &descriptor_set_layout,
+    };
+
+    var descriptor_set: c.VkDescriptorSet = undefined;
+    _ = c.vkAllocateDescriptorSets(device, &descriptor_set_alloc_info, &descriptor_set);
+
+    // Memory ---------------------------------------------------------------------
+    const buffer_create_info = c.VkBufferCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+    }
 }
 
 // Helper Functions ---------------------------------------------------------------
