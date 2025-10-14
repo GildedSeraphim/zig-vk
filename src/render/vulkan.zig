@@ -10,6 +10,28 @@ const Allocator = std.mem.Allocator;
 const w = @import("glfw.zig");
 const win = w.Window;
 
+pub const BufferUsage = packed struct(u32) {
+    transfer_src: bool = false,
+    transfer_dst: bool = false,
+    uniform_texel_buffer: bool = false,
+    storage_texel_buffer: bool = false,
+    uniform_buffer: bool = false,
+    storage_buffer: bool = false,
+    index_buffer: bool = false,
+    vertex_buffer: bool = false,
+    indirect_buffer: bool = false,
+    _padding: enum(u23) { unset } = .unset,
+};
+
+pub const BufferFlags = packed struct(u32) {
+    device_local: bool = false,
+    host_visible: bool = false,
+    host_coherent: bool = false,
+    host_cached: bool = false,
+    lazily_allocated: bool = false,
+    _padding: enum(u27) { unset } = .unset,
+};
+
 pub fn init(alloc: Allocator) !void {
     const window = try win.create(800, 600, "Vulkan");
     defer window.destroy();
@@ -566,9 +588,140 @@ pub fn init(alloc: Allocator) !void {
     _ = c.vkAllocateDescriptorSets(device, &descriptor_set_alloc_info, &descriptor_set);
 
     // Memory ---------------------------------------------------------------------
+    const buffer_usage = BufferUsage{
+        .uniform_buffer = true,
+        .transfer_dst = true,
+    };
+
+    const buffer_flags = BufferFlags{
+        .device_local = true,
+    };
+
+    const queue_family: u32 = 0;
+
     const buffer_create_info = c.VkBufferCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-    }
+        .size = 64,
+        .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+        .usage = @bitCast(buffer_usage),
+        .queueFamilyIndexCount = 1,
+        .pQueueFamilyIndices = &queue_family,
+    };
+
+    var buffer: c.VkBuffer = undefined;
+    _ = c.vkCreateBuffer(device, &buffer_create_info, vk_alloc_cb, &buffer);
+    defer c.vkDestroyBuffer(device, buffer, vk_alloc_cb);
+
+    var memory_req: c.VkMemoryRequirements = undefined;
+    _ = c.vkGetBufferMemoryRequirements(device, buffer, &memory_req);
+
+    var memory_properties: c.VkPhysicalDeviceMemoryProperties = undefined;
+    _ = c.vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+    const alloc_info = c.VkMemoryAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memory_req.size,
+        .memoryTypeIndex = pick_memory_type(memory_properties, memory_req.memoryTypeBits, @bitCast(buffer_flags)),
+    };
+
+    var device_memory: c.VkDeviceMemory = undefined;
+    _ = c.vkAllocateMemory(device, &alloc_info, vk_alloc_cb, &device_memory);
+    _ = c.vkBindBufferMemory(device, buffer, device_memory, 0);
+    defer c.vkFreeMemory(device, device_memory, null);
+
+    var data: [*c]u8 = undefined;
+    _ = c.vkMapMemory(device, device_memory, 0, c.VK_WHOLE_SIZE, 0, @ptrCast(&data));
+    defer c.vkUnmapMemory(device, device_memory);
+
+    const descriptor_buffer_info = c.VkDescriptorBufferInfo{
+        .buffer = buffer,
+        .offset = 0,
+        .range = 64,
+    };
+
+    const write_descriptor_set = c.VkWriteDescriptorSet{
+        .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = descriptor_set,
+        .dstBinding = 0,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .pBufferInfo = &descriptor_buffer_info,
+    };
+
+    _ = c.vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, null);
+
+    // Command Pools --------------------------------------------------------------
+    const command_pool_create_info = c.VkCommandPoolCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .queueFamilyIndex = 0,
+    };
+
+    var command_pool: c.VkCommandPool = undefined;
+    _ = c.vkCreateCommandPool(device, &command_pool_create_info, vk_alloc_cb, &command_pool);
+    defer c.vkDestroyCommandPool(device, command_pool, vk_alloc_cb);
+
+    // Command Buffer -------------------------------------------------------------
+    const command_buffer_alloc_info = c.VkCommandBufferAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandBufferCount = 1,
+        .commandPool = command_pool,
+        .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    };
+
+    var command_buffer: c.VkCommandBuffer = undefined;
+    _ = c.vkAllocateCommandBuffers(device, &command_buffer_alloc_info, &command_buffer);
+    defer c.vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
+
+    // Now we can render!
+    const begin_info: c.VkCommandBufferBeginInfo = .{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+
+    _ = c.vkBeginCommandBuffer(command_buffer, &begin_info);
+
+    const clear_color: c.VkClearValue = .{ .color = .{ .float32 = .{ 0.0, 0.0, 0.0, 1.0 } } };
+    const renderpass_begin_info = c.VkRenderPassBeginInfo{
+        .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = renderpass,
+        .framebuffer = framebuffer,
+        .renderArea = .{
+            .extent = swapchain_size,
+            .offset = .{ .x = 0, .y = 0 },
+        },
+        .clearValueCount = 1,
+        .pClearValues = &clear_color,
+    };
+
+    _ = c.vkCmdBeginRenderPass(command_buffer, &renderpass_begin_info, c.VK_SUBPASS_CONTENTS_INLINE);
+    _ = c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    _ = c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &descriptor_set, 0, null);
+    _ = c.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+    _ = c.vkCmdDraw(command_buffer, 3, 1, 0, 0);
+    _ = c.vkCmdEndRenderPass(command_buffer);
+    _ = c.vkEndCommandBuffer(command_buffer);
+
+    // Submit ---------------------------------------------------------------------
+    const submit_info = c.VkSubmitInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+    };
+    _ = c.vkQueueSubmit(queue, 1, &submit_info, null);
+
+    // Present here
+    const present_info = c.VkPresentInfoKHR{
+        .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &semaphore,
+        .swapchainCount = 1,
+        .pSwapchains = &swapchain,
+        .pImageIndices = @ptrCast(&images),
+        .pResults = null,
+    };
+
+    _ = c.vkQueuePresentKHR(queue, &present_info);
 }
 
 // Helper Functions ---------------------------------------------------------------
@@ -587,4 +740,17 @@ fn isSuitable(device: c.VkPhysicalDevice) bool {
     }
 
     return is_suitable;
+}
+
+pub fn pick_memory_type(memory_properties: c.VkPhysicalDeviceMemoryProperties, type_bits: u32, flags: u32) u32 {
+    var memory_type_index: u32 = 0;
+    for (0..memory_properties.memoryTypeCount) |index| {
+        const memory_type = memory_properties.memoryTypes[index];
+
+        if (((type_bits & (@as(u64, 1) << @intCast(index))) != 0) and (memory_type.propertyFlags & flags) != 0 and (memory_type.propertyFlags & c.VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD) == 0) {
+            memory_type_index = @intCast(index);
+        }
+    }
+
+    return memory_type_index;
 }
